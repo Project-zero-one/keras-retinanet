@@ -45,14 +45,14 @@ class Evaluate(keras.callbacks.Callback):
             weighted_average : Compute the mAP using the weighted average of precisions among classes.
             verbose          : Set the verbosity level, by default this is set to 1.
         """
-        self.generator       = generator
-        self.iou_threshold   = iou_threshold
+        self.generator = generator
+        self.iou_threshold = iou_threshold
         self.score_threshold = score_threshold
-        self.max_detections  = max_detections
-        self.save_path       = save_path
-        self.tensorboard     = tensorboard
+        self.max_detections = max_detections
+        self.save_path = save_path
+        self.tensorboard = tensorboard
         self.weighted_average = weighted_average
-        self.verbose         = verbose
+        self.verbose = verbose
 
         super(Evaluate, self).__init__()
 
@@ -60,7 +60,7 @@ class Evaluate(keras.callbacks.Callback):
         logs = logs or {}
 
         # run evaluation
-        average_precisions, _ = evaluate(
+        average_iou, average_precisions, _ = evaluate(
             self.generator,
             self.model,
             iou_threshold=self.iou_threshold,
@@ -72,16 +72,19 @@ class Evaluate(keras.callbacks.Callback):
         # compute per class average precision
         total_instances = []
         precisions = []
+        iou = []
         for label, (average_precision, num_annotations) in average_precisions.items():
             if self.verbose == 1:
                 print('{:.0f} instances of class'.format(num_annotations),
                       self.generator.label_to_name(label), 'with average precision: {:.4f}'.format(average_precision))
             total_instances.append(num_annotations)
             precisions.append(average_precision)
+            iou.append(average_iou[label])
         if self.weighted_average:
             self.mean_ap = sum([a * b for a, b in zip(total_instances, precisions)]) / sum(total_instances)
         else:
             self.mean_ap = sum(precisions) / sum(x > 0 for x in total_instances)
+        miou = sum(iou) / sum(x > 0 for x in total_instances)
 
         if self.tensorboard:
             import tensorflow as tf
@@ -93,6 +96,8 @@ class Evaluate(keras.callbacks.Callback):
                 self.tensorboard.writer.add_summary(summary, epoch)
 
         logs['mAP'] = self.mean_ap
+        logs['mIoU'] = miou
 
         if self.verbose == 1:
+            print('mIoU: {:.4f}'.format(miou))
             print('mAP: {:.4f}'.format(self.mean_ap))

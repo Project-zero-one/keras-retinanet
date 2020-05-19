@@ -75,8 +75,8 @@ def _get_detections(generator, model, score_threshold=0.05, max_detections=100, 
     all_inferences = [None for i in range(generator.size())]
 
     for i in progressbar.progressbar(range(generator.size()), prefix='Running network: '):
-        raw_image    = generator.load_image(i)
-        image        = generator.preprocess_image(raw_image.copy())
+        raw_image = generator.load_image(i)
+        image = generator.preprocess_image(raw_image.copy())
         image, scale = generator.resize_image(image)
 
         if keras.backend.image_data_format() == 'channels_first':
@@ -100,9 +100,9 @@ def _get_detections(generator, model, score_threshold=0.05, max_detections=100, 
         scores_sort = np.argsort(-scores)[:max_detections]
 
         # select detections
-        image_boxes      = boxes[0, indices[scores_sort], :]
-        image_scores     = scores[scores_sort]
-        image_labels     = labels[0, indices[scores_sort]]
+        image_boxes = boxes[0, indices[scores_sort], :]
+        image_scores = scores[scores_sort]
+        image_labels = labels[0, indices[scores_sort]]
         image_detections = np.concatenate([image_boxes, np.expand_dims(image_scores, axis=1), np.expand_dims(image_labels, axis=1)], axis=1)
 
         if save_path is not None:
@@ -172,8 +172,9 @@ def evaluate(
     """
     # gather all detections and annotations
     all_detections, all_inferences = _get_detections(generator, model, score_threshold=score_threshold, max_detections=max_detections, save_path=save_path)
-    all_annotations    = _get_annotations(generator)
+    all_annotations = _get_annotations(generator)
     average_precisions = {}
+    average_iou = {}
 
     # all_detections = pickle.load(open('all_detections.pkl', 'rb'))
     # all_annotations = pickle.load(open('all_annotations.pkl', 'rb'))
@@ -182,39 +183,54 @@ def evaluate(
 
     # process detections and annotations
     for label in range(generator.num_classes()):
+        # Each class for "mean" AP
         if not generator.has_label(label):
             continue
 
         false_positives = np.zeros((0,))
-        true_positives  = np.zeros((0,))
-        scores          = np.zeros((0,))
+        true_positives = np.zeros((0,))
+        scores = np.zeros((0,))
         num_annotations = 0.0
+        max_iou = np.zeros((0,))
 
         for i in range(generator.size()):
-            detections           = all_detections[i][label]
-            annotations          = all_annotations[i][label]
-            num_annotations     += annotations.shape[0]
+            # Each image
+            detections = all_detections[i][label]
+            annotations = all_annotations[i][label]
+            num_annotations += annotations.shape[0]
             detected_annotations = []
+            iou = np.zeros((0,))
+            score_per_image = np.zeros((0,))
 
             for d in detections:
+                # Each detected in one frame until maxDets=100
                 scores = np.append(scores, d[4])
+                score_per_image = np.append(score_per_image, d[4])
 
                 if annotations.shape[0] == 0:
                     false_positives = np.append(false_positives, 1)
-                    true_positives  = np.append(true_positives, 0)
+                    true_positives = np.append(true_positives, 0)
                     continue
 
-                overlaps            = compute_overlap(np.expand_dims(d, axis=0), annotations)
+                overlaps = compute_overlap(np.expand_dims(d, axis=0), annotations)
                 assigned_annotation = np.argmax(overlaps, axis=1)
-                max_overlap         = overlaps[0, assigned_annotation]
+                max_overlap = overlaps[0, assigned_annotation]
+                iou = np.append(iou, max_overlap)
 
                 if max_overlap >= iou_threshold and assigned_annotation not in detected_annotations:
                     false_positives = np.append(false_positives, 0)
-                    true_positives  = np.append(true_positives, 1)
+                    true_positives = np.append(true_positives, 1)
                     detected_annotations.append(assigned_annotation)
                 else:
                     false_positives = np.append(false_positives, 1)
-                    true_positives  = np.append(true_positives, 0)
+                    true_positives = np.append(true_positives, 0)
+
+            # sort IoU by confidential score(元からscore順になってる?)
+            if len(iou) != 0:
+                # 1epoch目はdetectionされない模様
+                indices = np.argsort(-score_per_image)
+                iou = iou[indices]
+                max_iou = np.append(max_iou, iou[0])  # 仮想的にmaxDets=1としてscoreが一番高いIoUを取得
 
         # no annotations -> AP for this class is 0 (is this correct?)
         if num_annotations == 0:
@@ -222,23 +238,25 @@ def evaluate(
             continue
 
         # sort by score
-        indices         = np.argsort(-scores)
+        indices = np.argsort(-scores)
         false_positives = false_positives[indices]
-        true_positives  = true_positives[indices]
+        true_positives = true_positives[indices]
 
         # compute false positives and true positives
         false_positives = np.cumsum(false_positives)
-        true_positives  = np.cumsum(true_positives)
+        true_positives = np.cumsum(true_positives)
 
         # compute recall and precision
-        recall    = true_positives / num_annotations
+        recall = true_positives / num_annotations
         precision = true_positives / np.maximum(true_positives + false_positives, np.finfo(np.float64).eps)
 
         # compute average precision
-        average_precision  = _compute_ap(recall, precision)
+        average_precision = _compute_ap(recall, precision)
         average_precisions[label] = average_precision, num_annotations
+        # compute mIoU
+        average_iou[label] = sum(max_iou) / generator.size()
 
     # inference time
     inference_time = np.sum(all_inferences) / generator.size()
 
-    return average_precisions, inference_time
+    return average_iou, average_precisions, inference_time

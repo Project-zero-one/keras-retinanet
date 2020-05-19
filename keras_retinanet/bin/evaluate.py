@@ -17,6 +17,8 @@ limitations under the License.
 import argparse
 import os
 import sys
+import tensorflow as tf
+from keras import backend as K
 
 # Allow relative imports when being executed as script.
 if __name__ == "__main__" and __package__ is None:
@@ -86,7 +88,7 @@ def create_generator(args, preprocess_image):
 def parse_args(args):
     """ Parse the arguments.
     """
-    parser     = argparse.ArgumentParser(description='Evaluation script for a RetinaNet network.')
+    parser = argparse.ArgumentParser(description='Evaluation script for a RetinaNet network.')
     subparsers = parser.add_subparsers(help='Arguments for specific dataset types.', dest='dataset_type')
     subparsers.required = True
 
@@ -95,23 +97,24 @@ def parse_args(args):
 
     pascal_parser = subparsers.add_parser('pascal')
     pascal_parser.add_argument('pascal_path', help='Path to dataset directory (ie. /tmp/VOCdevkit).')
-    pascal_parser.add_argument('--image-extension',   help='Declares the dataset images\' extension.', default='.jpg')
+    pascal_parser.add_argument('--image-extension', help='Declares the dataset images\' extension.', default='.jpg')
 
     csv_parser = subparsers.add_parser('csv')
     csv_parser.add_argument('annotations', help='Path to CSV file containing annotations for evaluation.')
     csv_parser.add_argument('classes', help='Path to a CSV file containing class label mapping.')
 
-    parser.add_argument('model',              help='Path to RetinaNet model.')
-    parser.add_argument('--convert-model',    help='Convert the model to an inference model (ie. the input is a training model).', action='store_true')
-    parser.add_argument('--backbone',         help='The backbone of the model.', default='resnet50')
-    parser.add_argument('--gpu',              help='Id of the GPU to use (as reported by nvidia-smi).', type=int)
-    parser.add_argument('--score-threshold',  help='Threshold on score to filter detections with (defaults to 0.05).', default=0.05, type=float)
-    parser.add_argument('--iou-threshold',    help='IoU Threshold to count for a positive detection (defaults to 0.5).', default=0.5, type=float)
-    parser.add_argument('--max-detections',   help='Max Detections per image (defaults to 100).', default=100, type=int)
-    parser.add_argument('--save-path',        help='Path for saving images with detections (doesn\'t work for COCO).')
-    parser.add_argument('--image-min-side',   help='Rescale the image so the smallest side is min_side.', type=int, default=800)
-    parser.add_argument('--image-max-side',   help='Rescale the image if the largest side is larger than max_side.', type=int, default=1333)
-    parser.add_argument('--config',           help='Path to a configuration parameters .ini file (only used with --convert-model).')
+    parser.add_argument('model', help='Path to RetinaNet model.')
+    parser.add_argument('--convert-model', help='Convert the model to an inference model (ie. the input is a training model).', action='store_true')
+    parser.add_argument('--backbone', help='The backbone of the model.', default='resnet50')
+    parser.add_argument('--gpu', help='Id of the GPU to use (as reported by nvidia-smi).', type=int)
+    parser.add_argument('--gpu-memory', help='Use memory size (rate)', type=float, default=1)
+    parser.add_argument('--score-threshold', help='Threshold on score to filter detections with (defaults to 0.05).', default=0.05, type=float)
+    parser.add_argument('--iou-threshold', help='IoU Threshold to count for a positive detection (defaults to 0.5).', default=0.5, type=float)
+    parser.add_argument('--max-detections', help='Max Detections per image (defaults to 100).', default=100, type=int)
+    parser.add_argument('--save-path', help='Path for saving images with detections (doesn\'t work for COCO).')
+    parser.add_argument('--image-min-side', help='Rescale the image so the smallest side is min_side.', type=int, default=800)
+    parser.add_argument('--image-max-side', help='Rescale the image if the largest side is larger than max_side.', type=int, default=1333)
+    parser.add_argument('--config', help='Path to a configuration parameters .ini file (only used with --convert-model).')
 
     return parser.parse_args(args)
 
@@ -121,6 +124,12 @@ def main(args=None):
     if args is None:
         args = sys.argv[1:]
     args = parse_args(args)
+
+    # save GPU memory
+    # config = tf.ConfigProto()
+    # config.gpu_options.per_process_gpu_memory_fraction = args.gpu_memory
+    # sess = tf.Session(config=config)
+    # K.set_session(sess)
 
     # make sure keras and tensorflow are the minimum required version
     check_keras_version()
@@ -164,7 +173,7 @@ def main(args=None):
         from ..utils.coco_eval import evaluate_coco
         evaluate_coco(generator, model, args.score_threshold)
     else:
-        average_precisions, inference_time = evaluate(
+        miou, average_precisions, inference_time = evaluate(
             generator,
             model,
             iou_threshold=args.iou_threshold,
@@ -176,11 +185,13 @@ def main(args=None):
         # print evaluation
         total_instances = []
         precisions = []
+        iou = []
         for label, (average_precision, num_annotations) in average_precisions.items():
             print('{:.0f} instances of class'.format(num_annotations),
                   generator.label_to_name(label), 'with average precision: {:.4f}'.format(average_precision))
             total_instances.append(num_annotations)
             precisions.append(average_precision)
+            iou.append(miou[label])
 
         if sum(total_instances) == 0:
             print('No test instances found.')
@@ -188,8 +199,10 @@ def main(args=None):
 
         print('Inference time for {:.0f} images: {:.4f}'.format(generator.size(), inference_time))
 
-        print('mAP using the weighted average of precisions among classes: {:.4f}'.format(sum([a * b for a, b in zip(total_instances, precisions)]) / sum(total_instances)))
+        print('mAP using the weighted average of precisions among classes: {:.4f}'
+              .format(sum([a * b for a, b in zip(total_instances, precisions)]) / sum(total_instances)))
         print('mAP: {:.4f}'.format(sum(precisions) / sum(x > 0 for x in total_instances)))
+        print('mIoU: {:.4f}'.format(sum(iou) / sum(x > 0 for x in total_instances)))
 
 
 if __name__ == '__main__':
