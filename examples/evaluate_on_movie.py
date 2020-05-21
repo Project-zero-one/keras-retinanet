@@ -80,7 +80,9 @@ def render(draw, results, scale, labels_to_names, score_threshold=0.5):
 
 def make_predict_movie(movie_path, save_path,
                        model, labels_to_names,
-                       start_frame=0, end_frame=1000000):
+                       start_frame=0, end_frame=1000000,
+                       score_threshold=0.5,
+                       ):
     # for video read(input)
     cap = cv2.VideoCapture(movie_path)
     raw_size = (int(cap.get(3)), int(cap.get(4)))
@@ -101,7 +103,7 @@ def make_predict_movie(movie_path, save_path,
         # Prediction on model
         results = model.predict_on_batch(np.expand_dims(input_image, axis=0))[:3]
         # Display the predicted frame
-        output = render(frame, results, scale, labels_to_names)
+        output = render(frame, results, scale, labels_to_names, score_threshold)
         fps.calculate(output)
         out.write(output)
 
@@ -118,11 +120,12 @@ if __name__ == '__main__':
     # input data path
     movie_path = '/data/input/IMA_root/test/case2_25_18-26_13.mp4'
     start_frame = 0
-    end_frame = 30 * 60
+    end_frame = 30 * 60  # 30fps x N sec
     # save predicted movie
     save_path = 'case2_IMArootDet.avi'
     # trained model path
     model_path = '/data/result/IMA_root/season5/snapshot_trial3/model/resnet50_csv_50.h5'
+    score_threshold = 0.05
 
     ### main ###
     # load retinanet model
@@ -133,4 +136,5 @@ if __name__ == '__main__':
         movie_path, save_path,
         model, labels_to_names,
         start_frame, end_frame,
+        score_threshold
     )
